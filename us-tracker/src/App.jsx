@@ -12,10 +12,7 @@ import {
 } from "firebase/firestore";
 
 
-/**
- * --- FIREBASE CONFIGURATION ---
- * Paste your config here to enable syncing.
- */
+/*** --- FIREBASE CONFIGURATION --- ***/
 const firebaseConfig = {
   apiKey: "AIzaSyC-ZMFygtySP25DTwyb3CKU1D2dgO9zJJo",
   authDomain: "ustracker-2798c.firebaseapp.com",
@@ -71,7 +68,7 @@ const HomeScreen = ({ onNavigate }) => (
       />
       <MenuButton 
         icon={<Utensils size={24} />} 
-        label="Dinner Picker" 
+        label="Dinner Picker TURDDDD BURGER" 
         sub="Real spots nearby"
         onClick={() => onNavigate('food')} 
         color="bg-orange-50 text-orange-600 hover:bg-orange-100"
