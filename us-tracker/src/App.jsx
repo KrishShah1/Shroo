@@ -2,17 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { 
   Heart, Check, Plus, Trophy, Calendar, Flame, 
   X, Camera, Utensils, ArrowRight, ArrowLeft, MapPin, 
-  RefreshCw, User
+  RefreshCw, User, CloudSun, Gamepad2, RotateCcw,
+  Navigation
 } from 'lucide-react';
+import confetti from 'canvas-confetti'; 
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
 import { 
-  getFirestore, collection, addDoc, updateDoc, deleteDoc, 
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, setDoc,
   doc, onSnapshot, query, orderBy, serverTimestamp, where 
 } from "firebase/firestore";
 
-
-/*** --- FIREBASE CONFIGURATION --- ***/
+/**
+ * --- FIREBASE CONFIGURATION ---
+ */
 const firebaseConfig = {
   apiKey: "AIzaSyC-ZMFygtySP25DTwyb3CKU1D2dgO9zJJo",
   authDomain: "ustracker-2798c.firebaseapp.com",
@@ -24,23 +26,175 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
-
-// Initialize Firebase
 let db = null;
 const isFirebaseEnabled = firebaseConfig.apiKey !== "";
-if (isFirebaseEnabled) {
+
+try {
   const app = initializeApp(firebaseConfig);
   db = getFirestore(app);
+} catch (error) {
+  console.log("Firebase already initialized");
 }
+
+// --- HELPER FUNCTIONS ---
+
+// Calculate distance between two lat/lon points in miles
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 3959; // Radius of the earth in miles
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2); 
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
+  return R * c; // Distance in miles
+};
+
+// --- WIDGETS ---
+
+const WeatherWidget = () => {
+  const [weather, setWeather] = useState(null);
+
+  useEffect(() => {
+    // Default: Chino Hills
+    let lat = 33.9931;
+    let lon = -117.7553;
+
+    const fetchWeather = (latitude, longitude) => {
+      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&temperature_unit=fahrenheit`)
+        .then(res => res.json())
+        .then(data => {
+          setWeather(Math.round(data.current.temperature_2m));
+        })
+        .catch(err => console.log("Weather error", err));
+    };
+
+    // Try to get real location
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          fetchWeather(position.coords.latitude, position.coords.longitude);
+        },
+        () => {
+          fetchWeather(lat, lon); // Fallback if denied
+        }
+      );
+    } else {
+      fetchWeather(lat, lon);
+    }
+  }, []);
+
+  if (!weather) return null;
+
+  return (
+    <div className="absolute top-4 right-4 bg-white/80 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold text-slate-600 flex items-center gap-1 shadow-sm z-10">
+      <CloudSun size={14} className="text-orange-400" />
+      {weather}°F
+    </div>
+  );
+};
+
+const CountdownWidget = () => {
+  // UPDATED: December 3rd, 2025
+  const targetDate = new Date("2025-12-03"); 
+  const today = new Date();
+  
+  // Reset time to start of day for accurate day diff
+  today.setHours(0,0,0,0);
+  targetDate.setHours(0,0,0,0);
+
+  const diffTime = targetDate - today;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+
+  // Logic if date passed
+  const label = diffDays === 0 ? "It's Today!" : diffDays < 0 ? "Days since Anniversary" : "Days until Anniversary";
+  const displayDays = Math.abs(diffDays);
+
+  return (
+    <div className="bg-white/90 backdrop-blur-sm px-6 py-2 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center">
+      <span className="text-2xl font-bold text-rose-500">{displayDays}</span>
+      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{label}</span>
+    </div>
+  );
+};
+
+// NEW: Distance Tracker
+const DistanceWidget = ({ currentUser }) => {
+  const [distance, setDistance] = useState(null);
+  const [myLoc, setMyLoc] = useState(null);
+
+  useEffect(() => {
+    if (!isFirebaseEnabled || !db) return;
+
+    // 1. Get MY location and save to DB
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition((position) => {
+        const loc = { 
+          lat: position.coords.latitude, 
+          lng: position.coords.longitude,
+          timestamp: serverTimestamp()
+        };
+        setMyLoc(loc);
+        
+        // Save to Firestore: locations/Krish or locations/Shrutisri
+        setDoc(doc(db, "locations", currentUser), loc);
+      }, (err) => console.log(err), { enableHighAccuracy: true });
+    }
+
+    // 2. Listen to PARTNER'S location
+    const otherUser = currentUser === "Krish" ? "Shrutisri" : "Krish";
+    const unsubscribe = onSnapshot(doc(db, "locations", otherUser), (docSnap) => {
+      if (docSnap.exists() && myLoc) {
+        const partnerLoc = docSnap.data();
+        const miles = calculateDistance(myLoc.lat, myLoc.lng, partnerLoc.lat, partnerLoc.lng);
+        setDistance(miles.toFixed(1));
+      }
+    });
+
+    return () => unsubscribe();
+  }, [currentUser, myLoc]); // Re-run if user changes or my location updates
+
+  return (
+    <div className="bg-white/90 backdrop-blur-sm px-4 py-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3 w-full max-w-xs">
+      <div className="bg-blue-100 p-2 rounded-full text-blue-600">
+        <Navigation size={20} className={distance ? "fill-blue-600" : ""} />
+      </div>
+      <div>
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Love Radar</h3>
+        <p className="text-slate-800 font-bold leading-tight">
+          {distance ? `${distance} miles apart` : "Locating..."}
+        </p>
+      </div>
+    </div>
+  );
+};
 
 // --- COMPONENTS ---
 
 // 1. HOME SCREEN
-const HomeScreen = ({ onNavigate }) => (
-  <div className="flex flex-col items-center justify-center min-h-[80vh] space-y-8 animate-in fade-in duration-500">
-    <div className="relative w-48 h-48 rounded-full overflow-hidden border-4 border-white shadow-2xl">
+const HomeScreen = ({ onNavigate, currentUser, setCurrentUser }) => (
+  <div className="flex flex-col items-center justify-center min-h-[80vh] space-y-6 animate-in fade-in duration-500 relative pb-10">
+    
+    <WeatherWidget />
+
+    {/* User Switcher (Important for Distance/Habits) */}
+    <div className="bg-white p-1 rounded-full shadow-sm border border-slate-100 flex absolute top-4 left-4 z-10">
+      {["Krish", "Shrutisri"].map(user => (
+        <button
+          key={user}
+          onClick={() => setCurrentUser(user)}
+          className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
+            currentUser === user 
+              ? 'bg-slate-900 text-white shadow-md' 
+              : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          {user === "Krish" ? "K" : "S"}
+        </button>
+      ))}
+    </div>
+
+    <div className="relative w-40 h-40 rounded-full overflow-hidden border-4 border-white shadow-2xl mt-8">
       <img 
         src="https://images.unsplash.com/photo-1516589178581-6cd7833ae3b2?q=80&w=1000&auto=format&fit=crop" 
         alt="Us" 
@@ -51,11 +205,15 @@ const HomeScreen = ({ onNavigate }) => (
       </div>
     </div>
 
-    <div className="w-full max-w-xs space-y-4">
+    <CountdownWidget />
+    
+    <DistanceWidget currentUser={currentUser} />
+
+    <div className="w-full max-w-xs space-y-3">
       <MenuButton 
         icon={<Check size={24} />} 
         label="Habit Tracker" 
-        sub="Krish vs Shrutisri"
+        sub={`${currentUser}'s Goals`}
         onClick={() => onNavigate('habits')} 
         color="bg-rose-50 text-rose-600 hover:bg-rose-100"
       />
@@ -68,10 +226,17 @@ const HomeScreen = ({ onNavigate }) => (
       />
       <MenuButton 
         icon={<Utensils size={24} />} 
-        label="Dinner Picker TURDDDD BURGER" 
+        label="Dinner Picker" 
         sub="Real spots nearby"
         onClick={() => onNavigate('food')} 
         color="bg-orange-50 text-orange-600 hover:bg-orange-100"
+      />
+      <MenuButton 
+        icon={<Gamepad2 size={24} />} 
+        label="Game Room" 
+        sub="Live Tic-Tac-Toe"
+        onClick={() => onNavigate('game')} 
+        color="bg-teal-50 text-teal-600 hover:bg-teal-100"
       />
     </div>
   </div>
@@ -91,15 +256,13 @@ const MenuButton = ({ icon, label, sub, onClick, color }) => (
   </button>
 );
 
-// 2. HABIT TRACKER (Dual User)
-const HabitTracker = () => {
-  const [currentUser, setCurrentUser] = useState("Krish"); // Default view
+// 2. HABIT TRACKER
+const HabitTracker = ({ currentUser }) => {
   const [habits, setHabits] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmoji, setNewEmoji] = useState("✨");
 
-  // Load Data
   useEffect(() => {
     if (isFirebaseEnabled && db) {
       const q = query(collection(db, "habits"), orderBy("createdAt", "desc"));
@@ -111,11 +274,6 @@ const HabitTracker = () => {
       if (saved) setHabits(JSON.parse(saved));
     }
   }, []);
-
-  // Sync Local if no Firebase
-  useEffect(() => {
-    if (!isFirebaseEnabled) localStorage.setItem('us-habits', JSON.stringify(habits));
-  }, [habits]);
 
   const addHabit = async () => {
     if (!newName.trim()) return;
@@ -142,6 +300,15 @@ const HabitTracker = () => {
     const newDates = isDone ? habit.completedDates.filter(d => d !== today) : [...habit.completedDates, today];
     const newStreak = isDone ? Math.max(0, habit.streak - 1) : habit.streak + 1;
 
+    if (!isDone) {
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#FFC0CB', '#FF69B4', '#FF1493', '#C71585'] 
+      });
+    }
+
     if (isFirebaseEnabled && db) {
       await updateDoc(doc(db, "habits", habit.id), { completedDates: newDates, streak: newStreak });
     } else {
@@ -155,22 +322,6 @@ const HabitTracker = () => {
 
   return (
     <div className="space-y-4 pb-24">
-      <div className="bg-white p-2 rounded-xl flex gap-1 shadow-sm border border-slate-100 mb-4">
-        {["Krish", "Shrutisri"].map(user => (
-          <button
-            key={user}
-            onClick={() => setCurrentUser(user)}
-            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-colors ${
-              currentUser === user 
-                ? 'bg-rose-500 text-white shadow-md' 
-                : 'text-slate-400 hover:bg-slate-50'
-            }`}
-          >
-            {user}
-          </button>
-        ))}
-      </div>
-
       <div className="bg-rose-100 p-6 rounded-2xl mb-2">
         <h2 className="text-rose-800 font-bold text-xl flex items-center gap-2">
           <Check size={20}/> {currentUser}'s Goals
@@ -188,7 +339,7 @@ const HabitTracker = () => {
         {myHabits.map(habit => {
           const isDone = habit.completedDates.includes(new Date().toISOString().split('T')[0]);
           return (
-            <div key={habit.id} onClick={() => toggleHabit(habit)} className={`flex items-center justify-between p-4 rounded-2xl cursor-pointer transition-all ${isDone ? 'bg-rose-500 text-white shadow-lg' : 'bg-white border border-slate-100'}`}>
+            <div key={habit.id} onClick={() => toggleHabit(habit)} className={`flex items-center justify-between p-4 rounded-2xl cursor-pointer transition-all ${isDone ? 'bg-rose-500 text-white shadow-lg scale-[1.02]' : 'bg-white border border-slate-100'}`}>
               <div className="flex items-center gap-4">
                 <span className="text-2xl">{habit.emoji}</span>
                 <div>
@@ -254,7 +405,7 @@ const HabitTracker = () => {
   );
 };
 
-// 3. MEMORY JAR (4-Grid Slideshow)
+// 3. MEMORY JAR
 const MemoryJar = () => {
   const [memories, setMemories] = useState([
     { id: 1, url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&q=80', caption: 'Sample 1' },
@@ -267,7 +418,6 @@ const MemoryJar = () => {
   const [showInput, setShowInput] = useState(false);
   const [newUrl, setNewUrl] = useState("");
 
-  // Firebase Sync for Memories
   useEffect(() => {
     if (isFirebaseEnabled && db) {
       const q = query(collection(db, "memories"), orderBy("createdAt", "desc"));
@@ -279,7 +429,6 @@ const MemoryJar = () => {
     }
   }, []);
 
-  // Rotate pages every 5 seconds
   useEffect(() => {
     const timer = setInterval(() => {
       setPage(prev => {
@@ -324,7 +473,6 @@ const MemoryJar = () => {
         </div>
       )}
 
-      {/* 2x2 Grid */}
       <div className="flex-1 grid grid-cols-2 grid-rows-2 gap-3 pb-8">
         {Array.from({ length: 4 }).map((_, i) => {
           const item = currentItems[i];
@@ -358,7 +506,7 @@ const MemoryJar = () => {
   );
 };
 
-// 4. FOOD SWIPER (Smart Image Selection)
+// 4. FOOD SWIPER
 const FoodSwiper = () => {
   const [loading, setLoading] = useState(false);
   const [places, setPlaces] = useState([]);
@@ -370,11 +518,8 @@ const FoodSwiper = () => {
     { id: '2', name: 'Sushi Zen (Demo)', type: 'Japanese', img: 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=600&fit=crop' },
   ];
 
-  // --- SMART IMAGE LOGIC ---
   const getSmartImage = (name, type) => {
     const text = (name + " " + type).toLowerCase();
-    
-    // Map keywords to specific high-quality Unsplash Images
     if (text.includes('pizza')) return 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600&q=80';
     if (text.includes('burger')) return 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=600&q=80';
     if (text.includes('sushi') || text.includes('japanese')) return 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=600&q=80';
@@ -384,13 +529,11 @@ const FoodSwiper = () => {
     if (text.includes('indian')) return 'https://images.unsplash.com/photo-1585937421612-70a008356f36?w=600&q=80';
     if (text.includes('ice cream') || text.includes('dessert')) return 'https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=600&q=80';
 
-    // Random generic food backups if no keyword match
     const generics = [
-      'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=600&q=80', // Restaurant interior
-      'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600&q=80', // Fancy plating
-      'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600&q=80', // Food spread
+      'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=600&q=80', 
+      'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600&q=80', 
+      'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600&q=80', 
     ];
-    // Pick based on name length to be consistent (not random every re-render)
     return generics[name.length % generics.length];
   };
 
@@ -420,7 +563,7 @@ const FoodSwiper = () => {
                   type: type,
                   lat: el.lat || el.center.lat,
                   lon: el.lon || el.center.lon,
-                  img: getSmartImage(name, type) // <--- USING SMART IMAGE HERE
+                  img: getSmartImage(name, type)
                 };
               });
             
@@ -444,8 +587,7 @@ const FoodSwiper = () => {
     setLoading(true);
     setError(null);
 
-    // Default to Chino Hills/Sunnyvale area if no GPS
-    const defaultLoc = { lat: 33.9931, lon: -117.7553 }; // Chino Hills approx
+    const defaultLoc = { lat: 33.9931, lon: -117.7553 }; 
 
     if (!navigator.geolocation) {
       setError("Using Chino Hills (Location not supported)");
@@ -540,9 +682,123 @@ const FoodSwiper = () => {
   );
 };
 
+// 5. LOVE TIC-TAC-TOE GAME (Live Sync)
+const LoveTicTacToe = () => {
+  const [board, setBoard] = useState(Array(9).fill(null));
+  const [isXNext, setIsXNext] = useState(true);
+  const [winner, setWinner] = useState(null);
+
+  // Sync with Firebase
+  useEffect(() => {
+    if (isFirebaseEnabled && db) {
+      const gameRef = doc(db, "games", "tictactoe");
+      const unsubscribe = onSnapshot(gameRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setBoard(data.board);
+          setIsXNext(data.isXNext);
+          
+          // Confetti for new wins
+          if (data.winner && !winner) {
+            setWinner(data.winner);
+            confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
+          } else {
+             setWinner(data.winner);
+          }
+        } else {
+            // Initialize if it doesn't exist
+            setDoc(gameRef, { board: Array(9).fill(null), isXNext: true, winner: null });
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [winner]); // Re-run effect if winner changes locally to prevent loops
+
+  const calculateWinner = (squares) => {
+    const lines = [
+      [0, 1, 2], [3, 4, 5], [6, 7, 8],
+      [0, 3, 6], [1, 4, 7], [2, 5, 8],
+      [0, 4, 8], [2, 4, 6],
+    ];
+    for (let i = 0; i < lines.length; i++) {
+      const [a, b, c] = lines[i];
+      if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c]) {
+        return squares[a];
+      }
+    }
+    return null;
+  };
+
+  const handleClick = async (i) => {
+    if (winner || board[i]) return;
+    
+    // Optimistic Update
+    const newBoard = [...board];
+    newBoard[i] = isXNext ? '❤️' : '💋';
+    setBoard(newBoard);
+    const nextTurn = !isXNext;
+    setIsXNext(nextTurn);
+    
+    const win = calculateWinner(newBoard);
+    if (win) setWinner(win);
+
+    if (isFirebaseEnabled && db) {
+       await updateDoc(doc(db, "games", "tictactoe"), {
+          board: newBoard,
+          isXNext: nextTurn,
+          winner: win
+       });
+    }
+  };
+
+  const resetGame = async () => {
+    // Reset Local
+    setBoard(Array(9).fill(null));
+    setIsXNext(true);
+    setWinner(null);
+    
+    // Reset Cloud
+    if (isFirebaseEnabled && db) {
+       await setDoc(doc(db, "games", "tictactoe"), {
+          board: Array(9).fill(null),
+          isXNext: true,
+          winner: null
+       });
+    }
+  };
+
+  return (
+    <div className="h-[75vh] flex flex-col items-center">
+      <div className="bg-teal-50 p-6 rounded-2xl mb-8 w-full flex justify-between items-center">
+         <div>
+           <h2 className="text-teal-900 font-bold text-xl">Love Tactics</h2>
+           <p className="text-teal-600 text-sm">
+             {winner ? `Winner: ${winner}` : `Next Player: ${isXNext ? '❤️' : '💋'}`}
+           </p>
+         </div>
+         <button onClick={resetGame} className="bg-white p-2 rounded-full text-teal-600 shadow-sm"><RotateCcw size={20}/></button>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 w-full max-w-[300px]">
+        {board.map((cell, i) => (
+          <button
+            key={i}
+            onClick={() => handleClick(i)}
+            className="h-24 bg-white rounded-2xl shadow-sm border border-slate-100 text-4xl flex items-center justify-center hover:bg-slate-50 transition-colors"
+          >
+            {cell}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // --- MAIN APP ---
 export default function App() {
   const [view, setView] = useState('home');
+  // LIFTED STATE: User selection is now global so it works for Distance Tracker too
+  const [currentUser, setCurrentUser] = useState("Krish"); 
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
@@ -557,17 +813,24 @@ export default function App() {
             <ArrowLeft size={24} className="text-slate-600" />
           </button>
           <span className="ml-2 font-bold text-lg capitalize">
-            {view === 'food' ? 'Dinner' : view}
+            {view === 'food' ? 'Dinner' : view === 'game' ? 'Game Room' : view}
           </span>
         </div>
       )}
 
       {/* Content Area */}
       <div className="p-4 max-w-md mx-auto">
-        {view === 'home' && <HomeScreen onNavigate={setView} />}
-        {view === 'habits' && <HabitTracker />}
+        {view === 'home' && (
+          <HomeScreen 
+            onNavigate={setView} 
+            currentUser={currentUser} 
+            setCurrentUser={setCurrentUser} 
+          />
+        )}
+        {view === 'habits' && <HabitTracker currentUser={currentUser} />}
         {view === 'memories' && <MemoryJar />}
         {view === 'food' && <FoodSwiper />}
+        {view === 'game' && <LoveTicTacToe />}
       </div>
 
     </div>
