@@ -5,23 +5,30 @@ import {
   RefreshCw, User
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
 import { 
   getFirestore, collection, addDoc, updateDoc, deleteDoc, 
   doc, onSnapshot, query, orderBy, serverTimestamp, where 
 } from "firebase/firestore";
+
 
 /**
  * --- FIREBASE CONFIGURATION ---
  * Paste your config here to enable syncing.
  */
 const firebaseConfig = {
-  apiKey: "", 
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyC-ZMFygtySP25DTwyb3CKU1D2dgO9zJJo",
+  authDomain: "ustracker-2798c.firebaseapp.com",
+  projectId: "ustracker-2798c",
+  storageBucket: "ustracker-2798c.firebasestorage.app",
+  messagingSenderId: "671900887532",
+  appId: "1:671900887532:web:5f5f3b50c451957e37f8c9",
+  measurementId: "G-51GLBVT503"
 };
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
 
 // Initialize Firebase
 let db = null;
