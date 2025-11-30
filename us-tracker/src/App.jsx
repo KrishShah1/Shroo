@@ -1,19 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Heart, Check, Plus, Trophy, Calendar, Flame, 
   X, Camera, Utensils, ArrowRight, ArrowLeft, MapPin, 
   RefreshCw, User, CloudSun, Gamepad2, RotateCcw,
-  Navigation
+  Navigation, MessageCircle, PenTool, Zap, HelpCircle,
+  Send
 } from 'lucide-react';
 import confetti from 'canvas-confetti'; 
 import { initializeApp } from "firebase/app";
 import { 
   getFirestore, collection, addDoc, updateDoc, deleteDoc, setDoc,
-  doc, onSnapshot, query, orderBy, serverTimestamp, where 
+  doc, onSnapshot, query, orderBy, serverTimestamp, where, getDoc 
 } from "firebase/firestore";
 
 /**
  * --- FIREBASE CONFIGURATION ---
+ * Replace this with your actual config from the Firebase Console
  */
 const firebaseConfig = {
   apiKey: "AIzaSyC-ZMFygtySP25DTwyb3CKU1D2dgO9zJJo",
@@ -38,16 +40,15 @@ try {
 
 // --- HELPER FUNCTIONS ---
 
-// Calculate distance between two lat/lon points in miles
 const calculateDistance = (lat1, lon1, lat2, lon2) => {
-  const R = 3959; // Radius of the earth in miles
+  const R = 3959; 
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
   const a = 
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2); 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
-  return R * c; // Distance in miles
+  return R * c; 
 };
 
 // --- WIDGETS ---
@@ -56,8 +57,7 @@ const WeatherWidget = () => {
   const [weather, setWeather] = useState(null);
 
   useEffect(() => {
-    // Default: Chino Hills
-    let lat = 33.9931;
+    let lat = 33.9931; // Chino Hills
     let lon = -117.7553;
 
     const fetchWeather = (latitude, longitude) => {
@@ -69,15 +69,10 @@ const WeatherWidget = () => {
         .catch(err => console.log("Weather error", err));
     };
 
-    // Try to get real location
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          fetchWeather(position.coords.latitude, position.coords.longitude);
-        },
-        () => {
-          fetchWeather(lat, lon); // Fallback if denied
-        }
+        (position) => fetchWeather(position.coords.latitude, position.coords.longitude),
+        () => fetchWeather(lat, lon)
       );
     } else {
       fetchWeather(lat, lon);
@@ -95,18 +90,14 @@ const WeatherWidget = () => {
 };
 
 const CountdownWidget = () => {
-  // UPDATED: December 3rd, 2025
+  // SET ANNIVERSARY DATE HERE
   const targetDate = new Date("2025-12-03"); 
   const today = new Date();
-  
-  // Reset time to start of day for accurate day diff
   today.setHours(0,0,0,0);
   targetDate.setHours(0,0,0,0);
 
   const diffTime = targetDate - today;
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-
-  // Logic if date passed
   const label = diffDays === 0 ? "It's Today!" : diffDays < 0 ? "Days since Anniversary" : "Days until Anniversary";
   const displayDays = Math.abs(diffDays);
 
@@ -118,7 +109,6 @@ const CountdownWidget = () => {
   );
 };
 
-// NEW: Distance Tracker
 const DistanceWidget = ({ currentUser }) => {
   const [distance, setDistance] = useState(null);
   const [myLoc, setMyLoc] = useState(null);
@@ -126,7 +116,6 @@ const DistanceWidget = ({ currentUser }) => {
   useEffect(() => {
     if (!isFirebaseEnabled || !db) return;
 
-    // 1. Get MY location and save to DB
     if (navigator.geolocation) {
       navigator.geolocation.watchPosition((position) => {
         const loc = { 
@@ -135,13 +124,10 @@ const DistanceWidget = ({ currentUser }) => {
           timestamp: serverTimestamp()
         };
         setMyLoc(loc);
-        
-        // Save to Firestore: locations/Krish or locations/Shrutisri
         setDoc(doc(db, "locations", currentUser), loc);
       }, (err) => console.log(err), { enableHighAccuracy: true });
     }
 
-    // 2. Listen to PARTNER'S location
     const otherUser = currentUser === "Krish" ? "Shrutisri" : "Krish";
     const unsubscribe = onSnapshot(doc(db, "locations", otherUser), (docSnap) => {
       if (docSnap.exists() && myLoc) {
@@ -152,7 +138,7 @@ const DistanceWidget = ({ currentUser }) => {
     });
 
     return () => unsubscribe();
-  }, [currentUser, myLoc]); // Re-run if user changes or my location updates
+  }, [currentUser, myLoc]);
 
   return (
     <div className="bg-white/90 backdrop-blur-sm px-4 py-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3 w-full max-w-xs">
@@ -169,15 +155,352 @@ const DistanceWidget = ({ currentUser }) => {
   );
 };
 
+// --- NEW FEATURES ---
+
+// 1. THIS OR THAT GAME
+const ThisOrThat = ({ currentUser }) => {
+  const questions = [
+    ["Beach Vacation", "Mountain Cabin"],
+    ["Night In", "Night Out"],
+    ["Save Money", "Spend Money"],
+    ["Horror Movie", "Comedy Movie"],
+    ["Sunrise", "Sunset"],
+    ["Coffee", "Tea"],
+    ["Summer", "Winter"],
+    ["Dogs", "Cats"]
+  ];
+
+  const [currentQIndex, setCurrentQIndex] = useState(0);
+  const [votes, setVotes] = useState({}); // { Krish: 0, Shrutisri: 1 }
+
+  useEffect(() => {
+    if (!isFirebaseEnabled || !db) return;
+    const gameRef = doc(db, "games", "thisorthat");
+    
+    const unsubscribe = onSnapshot(gameRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCurrentQIndex(data.currentQIndex || 0);
+        setVotes(data.votes || {});
+        
+        // Check for match & animate
+        if (data.votes && data.votes['Krish'] !== undefined && data.votes['Shrutisri'] !== undefined) {
+           if (data.votes['Krish'] === data.votes['Shrutisri']) {
+             confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+           }
+        }
+      } else {
+        setDoc(gameRef, { currentQIndex: 0, votes: {} });
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleVote = async (choiceIndex) => {
+    if (!isFirebaseEnabled || !db) return;
+    
+    // Optimistic UI update
+    const newVotes = { ...votes, [currentUser]: choiceIndex };
+    setVotes(newVotes);
+
+    await updateDoc(doc(db, "games", "thisorthat"), {
+      votes: newVotes
+    });
+  };
+
+  const nextQuestion = async () => {
+    if (!isFirebaseEnabled || !db) return;
+    const nextIndex = (currentQIndex + 1) % questions.length;
+    await updateDoc(doc(db, "games", "thisorthat"), {
+      currentQIndex: nextIndex,
+      votes: {} // Reset votes for new round
+    });
+  };
+
+  const myVote = votes[currentUser];
+  const partnerUser = currentUser === "Krish" ? "Shrutisri" : "Krish";
+  const partnerVote = votes[partnerUser];
+  const bothVoted = myVote !== undefined && partnerVote !== undefined;
+
+  return (
+    <div className="h-[75vh] flex flex-col items-center justify-center space-y-8">
+      <div className="text-center">
+        <h2 className="text-2xl font-bold text-rose-500 mb-2">This or That?</h2>
+        <p className="text-slate-400 text-sm">Do you match?</p>
+      </div>
+
+      <div className="w-full space-y-4">
+        {questions[currentQIndex].map((option, idx) => (
+          <button
+            key={idx}
+            onClick={() => handleVote(idx)}
+            className={`w-full p-6 rounded-2xl border-2 text-lg font-bold transition-all ${
+              myVote === idx 
+                ? 'bg-rose-500 text-white border-rose-500 shadow-lg scale-105' 
+                : 'bg-white border-slate-100 text-slate-700 hover:border-rose-200'
+            }`}
+          >
+            {option}
+            {bothVoted && partnerVote === idx && (
+              <span className="ml-2 text-sm bg-white/20 px-2 py-1 rounded-full">
+                {partnerUser} too!
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {bothVoted && (
+        <div className="animate-in fade-in slide-in-from-bottom-4 text-center">
+          <p className="text-lg font-bold mb-4">
+            {myVote === partnerVote ? "🎉 It's a Match!" : "😬 Opposites Attract?"}
+          </p>
+          <button 
+            onClick={nextQuestion}
+            className="bg-slate-900 text-white px-6 py-3 rounded-xl font-bold shadow-lg active:scale-95 transition-transform"
+          >
+            Next Question
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// 2. SHARED DRAWING NOTE
+const DrawingNote = ({ currentUser }) => {
+  const canvasRef = useRef(null);
+  const [lines, setLines] = useState([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+
+  // Sync Logic
+  useEffect(() => {
+    if (!isFirebaseEnabled || !db) return;
+    const unsubscribe = onSnapshot(doc(db, "games", "drawing"), (doc) => {
+      if (doc.exists()) {
+        setLines(doc.data().lines || []);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Draw on canvas whenever lines change
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    // Fix resolution for retina displays
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * 2;
+    canvas.height = rect.height * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3;
+
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    lines.forEach(line => {
+      ctx.strokeStyle = line.color;
+      ctx.beginPath();
+      line.points.forEach((p, i) => {
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      ctx.stroke();
+    });
+  }, [lines]);
+
+  const getPoint = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top
+    };
+  };
+
+  const startDrawing = (e) => {
+    setIsDrawing(true);
+    const point = getPoint(e);
+    // Start a new line locally
+    setLines([...lines, { color: currentUser === 'Krish' ? '#f43f5e' : '#6366f1', points: [point] }]);
+  };
+
+  const draw = (e) => {
+    if (!isDrawing) return;
+    e.preventDefault(); // Prevent scrolling on mobile
+    const point = getPoint(e);
+    const newLines = [...lines];
+    newLines[newLines.length - 1].points.push(point);
+    setLines(newLines);
+  };
+
+  const endDrawing = async () => {
+    setIsDrawing(false);
+    // Save to DB
+    if (isFirebaseEnabled && db) {
+      await setDoc(doc(db, "games", "drawing"), { lines });
+    }
+  };
+
+  const clearCanvas = async () => {
+    if (confirm("Clear the note?")) {
+      setLines([]);
+      if (isFirebaseEnabled && db) {
+        await setDoc(doc(db, "games", "drawing"), { lines: [] });
+      }
+    }
+  };
+
+  return (
+    <div className="h-[75vh] flex flex-col">
+      <div className="bg-indigo-50 p-4 rounded-2xl mb-4 flex justify-between items-center">
+        <div>
+          <h2 className="text-indigo-900 font-bold text-lg">Our Note</h2>
+          <p className="text-indigo-600 text-xs">Leave a doodle for them.</p>
+        </div>
+        <button onClick={clearCanvas} className="bg-white p-2 rounded-full text-indigo-600 shadow-sm">
+          <RotateCcw size={18} />
+        </button>
+      </div>
+      
+      <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden touch-none relative">
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full"
+          onMouseDown={startDrawing}
+          onMouseMove={draw}
+          onMouseUp={endDrawing}
+          onMouseLeave={endDrawing}
+          onTouchStart={startDrawing}
+          onTouchMove={draw}
+          onTouchEnd={endDrawing}
+        />
+        <div className="absolute bottom-4 right-4 pointer-events-none bg-slate-100/80 px-3 py-1 rounded-full text-xs text-slate-500">
+          {currentUser === 'Krish' ? 'Red Pen' : 'Blue Pen'}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 3. Q&A / WOULD YOU RATHER BOARD
+const QABoard = ({ currentUser }) => {
+  const [questions, setQuestions] = useState([]);
+  const [newQ, setNewQ] = useState("");
+  const [mode, setMode] = useState("ask"); // 'ask' or 'list'
+
+  useEffect(() => {
+    if (!isFirebaseEnabled || !db) return;
+    const q = query(collection(db, "questions"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setQuestions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const addQuestion = async (type = 'custom') => {
+    if (!newQ.trim()) return;
+    await addDoc(collection(db, "questions"), {
+      text: newQ,
+      author: currentUser,
+      type,
+      createdAt: serverTimestamp()
+    });
+    setNewQ("");
+  };
+
+  const addWouldYouRather = () => {
+    const prompts = [
+      "Would you rather always have to say everything on your mind or never be able to speak again?",
+      "Would you rather live in a treehouse or a houseboat?",
+      "Would you rather be famous or rich?",
+      "Would you rather explore space or the deep ocean?",
+      "Would you rather have a pause button or a rewind button for your life?",
+      "Would you rather have a personal chef or a personal house cleaner?",
+      "Would you rather be able to talk to animals or speak every language fluently?",
+      "Would you rather always be 10 minutes late or always be 20 minutes early?",
+      "Would you rather lose your phone or your wallet?",
+      "Would you rather have unlimited free travel or unlimited free food?",
+      "Would you rather never get angry or never get jealous?",
+      "Would you rather be the funniest person in the room or the smartest?",
+      "Would you rather live without music or live without movies?",
+      "Would you rather have a photographic memory or be able to forget anything you wanted?",
+      "Would you rather accidentally send a spicy text to your boss or your mom?",
+      "Would you rather have nosy neighbors or noisy neighbors?",
+      "Would you rather be able to fly or be invisible?",
+      "Would you rather always have to sing instead of speaking or dance everywhere you went?",
+      "Would you rather give up your smartphone or your car for a month?",
+      "Would you rather win the lottery or live twice as long?",
+      "Would you rather cook dinner every night or do the dishes every night?",
+      "Would you rather have a surprise party thrown for you or throw a surprise party for someone else?",
+      "Would you rather only be able to whisper or only be able to shout?"
+    ];
+    const random = prompts[Math.floor(Math.random() * prompts.length)];
+    addDoc(collection(db, "questions"), {
+      text: random,
+      author: "App",
+      type: "wyr",
+      createdAt: serverTimestamp()
+    });
+  };
+
+  return (
+    <div className="h-[80vh] flex flex-col">
+      <div className="bg-yellow-50 p-6 rounded-2xl mb-4">
+        <h2 className="text-yellow-900 font-bold text-xl flex items-center gap-2">
+          <MessageCircle size={20}/> Ask Us
+        </h2>
+        <p className="text-yellow-700 text-sm">Deep questions or silly debates.</p>
+      </div>
+
+      <div className="flex gap-2 mb-4">
+        <button onClick={addWouldYouRather} className="flex-1 bg-white border border-slate-200 py-3 rounded-xl text-sm font-bold text-slate-600 flex items-center justify-center gap-2 hover:bg-slate-50">
+          <Zap size={16} className="text-yellow-500" />
+          Random "Would You Rather"
+        </button>
+      </div>
+
+      <div className="flex gap-2 mb-6">
+        <input 
+          value={newQ} onChange={e => setNewQ(e.target.value)}
+          placeholder="Ask something..."
+          className="flex-1 p-3 bg-white border border-slate-200 rounded-xl outline-none focus:border-yellow-400"
+        />
+        <button onClick={() => addQuestion()} className="bg-yellow-500 text-white p-3 rounded-xl">
+          <Send size={20} />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto space-y-3 pb-20">
+        {questions.map(q => (
+          <div key={q.id} className={`p-4 rounded-2xl ${q.type === 'wyr' ? 'bg-indigo-50 border border-indigo-100' : 'bg-white border border-slate-100'}`}>
+            <div className="flex justify-between items-start mb-1">
+              <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${q.type === 'wyr' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
+                {q.type === 'wyr' ? 'WOULD YOU RATHER' : q.author}
+              </span>
+            </div>
+            <p className="text-slate-800 font-medium text-lg leading-tight">{q.text}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // --- COMPONENTS ---
 
 // 1. HOME SCREEN
 const HomeScreen = ({ onNavigate, currentUser, setCurrentUser }) => (
-  <div className="flex flex-col items-center justify-center min-h-[80vh] space-y-6 animate-in fade-in duration-500 relative pb-10">
+  <div className="flex flex-col items-center min-h-[85vh] animate-in fade-in duration-500 relative pb-20">
     
     <WeatherWidget />
 
-    {/* User Switcher (Important for Distance/Habits) */}
+    {/* User Switcher */}
     <div className="bg-white p-1 rounded-full shadow-sm border border-slate-100 flex absolute top-4 left-4 z-10">
       {["Krish", "Shrutisri"].map(user => (
         <button
@@ -194,65 +517,88 @@ const HomeScreen = ({ onNavigate, currentUser, setCurrentUser }) => (
       ))}
     </div>
 
-    <div className="relative w-40 h-40 rounded-full overflow-hidden border-4 border-white shadow-2xl mt-8">
-      <img 
-        src="https://images.unsplash.com/photo-1516589178581-6cd7833ae3b2?q=80&w=1000&auto=format&fit=crop" 
-        alt="Us" 
-        className="w-full h-full object-cover"
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-rose-500/50 to-transparent flex items-end justify-center pb-4">
-        <span className="text-white font-bold text-lg drop-shadow-md">Krish & Shrutisri</span>
+    <div className="mt-16 mb-6 text-center">
+      <div className="relative w-32 h-32 mx-auto rounded-full overflow-hidden border-4 border-white shadow-2xl mb-4">
+        <img 
+          src="https://images.unsplash.com/photo-1516589178581-6cd7833ae3b2?q=80&w=1000&auto=format&fit=crop" 
+          alt="Us" 
+          className="w-full h-full object-cover"
+        />
+      </div>
+      <CountdownWidget />
+      <div className="mt-4 flex justify-center">
+        <DistanceWidget currentUser={currentUser} />
       </div>
     </div>
 
-    <CountdownWidget />
-    
-    <DistanceWidget currentUser={currentUser} />
+    <div className="w-full max-w-sm space-y-6 px-4">
+      {/* Daily Essentials */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-2">Daily</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <MenuButtonSmall 
+            icon={<Check size={20} />} 
+            label="Habits" 
+            onClick={() => onNavigate('habits')} 
+            color="bg-rose-50 text-rose-600"
+          />
+          <MenuButtonSmall 
+            icon={<Utensils size={20} />} 
+            label="Food" 
+            onClick={() => onNavigate('food')} 
+            color="bg-orange-50 text-orange-600"
+          />
+        </div>
+        <MenuButtonSmall 
+            icon={<Camera size={20} />} 
+            label="Memory Jar" 
+            onClick={() => onNavigate('memories')} 
+            color="bg-indigo-50 text-indigo-600"
+            fullWidth
+          />
+      </div>
 
-    <div className="w-full max-w-xs space-y-3">
-      <MenuButton 
-        icon={<Check size={24} />} 
-        label="Habit Tracker" 
-        sub={`${currentUser}'s Goals`}
-        onClick={() => onNavigate('habits')} 
-        color="bg-rose-50 text-rose-600 hover:bg-rose-100"
-      />
-      <MenuButton 
-        icon={<Camera size={24} />} 
-        label="Memory Jar" 
-        sub="4 memories at a time"
-        onClick={() => onNavigate('memories')} 
-        color="bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
-      />
-      <MenuButton 
-        icon={<Utensils size={24} />} 
-        label="Dinner Picker" 
-        sub="Real spots nearby"
-        onClick={() => onNavigate('food')} 
-        color="bg-orange-50 text-orange-600 hover:bg-orange-100"
-      />
-      <MenuButton 
-        icon={<Gamepad2 size={24} />} 
-        label="Game Room" 
-        sub="Live Tic-Tac-Toe"
-        onClick={() => onNavigate('game')} 
-        color="bg-teal-50 text-teal-600 hover:bg-teal-100"
-      />
+      {/* Fun Zone */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-2">Fun Zone</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <MenuButtonSmall 
+            icon={<Gamepad2 size={20} />} 
+            label="Tic-Tac-Toe" 
+            onClick={() => onNavigate('game')} 
+            color="bg-teal-50 text-teal-600"
+          />
+          <MenuButtonSmall 
+            icon={<Zap size={20} />} 
+            label="This or That" 
+            onClick={() => onNavigate('thisorthat')} 
+            color="bg-purple-50 text-purple-600"
+          />
+          <MenuButtonSmall 
+            icon={<PenTool size={20} />} 
+            label="Drawing Note" 
+            onClick={() => onNavigate('drawing')} 
+            color="bg-blue-50 text-blue-600"
+          />
+          <MenuButtonSmall 
+            icon={<MessageCircle size={20} />} 
+            label="Q&A Board" 
+            onClick={() => onNavigate('qa')} 
+            color="bg-yellow-50 text-yellow-600"
+          />
+        </div>
+      </div>
     </div>
   </div>
 );
 
-const MenuButton = ({ icon, label, sub, onClick, color }) => (
+const MenuButtonSmall = ({ icon, label, onClick, color, fullWidth }) => (
   <button 
     onClick={onClick}
-    className={`w-full p-4 rounded-2xl flex items-center gap-4 transition-all active:scale-95 shadow-sm border border-slate-100 ${color}`}
+    className={`p-4 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all active:scale-95 shadow-sm border border-slate-100 ${color} ${fullWidth ? 'w-full flex-row' : ''}`}
   >
-    <div className="bg-white p-3 rounded-full shadow-sm">{icon}</div>
-    <div className="text-left">
-      <h3 className="font-bold text-lg">{label}</h3>
-      <p className="text-xs opacity-70">{sub}</p>
-    </div>
-    <ArrowRight className="ml-auto opacity-50" size={20} />
+    <div className="bg-white p-2 rounded-full shadow-sm">{icon}</div>
+    <span className="font-bold text-sm">{label}</span>
   </button>
 );
 
@@ -407,13 +753,7 @@ const HabitTracker = ({ currentUser }) => {
 
 // 3. MEMORY JAR
 const MemoryJar = () => {
-  const [memories, setMemories] = useState([
-    { id: 1, url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&q=80', caption: 'Sample 1' },
-    { id: 2, url: 'https://images.unsplash.com/photo-1522673607200-164530111d74?w=400&q=80', caption: 'Sample 2' },
-    { id: 3, url: 'https://images.unsplash.com/photo-1530103862676-de3c9da59af7?w=400&q=80', caption: 'Sample 3' },
-    { id: 4, url: 'https://images.unsplash.com/photo-1516589178581-6cd7833ae3b2?w=400&q=80', caption: 'Sample 4' },
-    { id: 5, url: 'https://images.unsplash.com/photo-1529619768328-e37af76c6fe5?w=400&q=80', caption: 'Sample 5' },
-  ]);
+  const [memories, setMemories] = useState([]); // Removed sample data for production
   const [page, setPage] = useState(0);
   const [showInput, setShowInput] = useState(false);
   const [newUrl, setNewUrl] = useState("");
@@ -424,6 +764,8 @@ const MemoryJar = () => {
       return onSnapshot(q, (snapshot) => {
         if (!snapshot.empty) {
           setMemories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        } else {
+          setMemories([]);
         }
       });
     }
@@ -433,7 +775,8 @@ const MemoryJar = () => {
     const timer = setInterval(() => {
       setPage(prev => {
         const totalPages = Math.ceil(memories.length / 4);
-        return (prev + 1) % (totalPages || 1);
+        if (totalPages === 0) return 0;
+        return (prev + 1) % totalPages;
       });
     }, 5000);
     return () => clearInterval(timer);
@@ -457,7 +800,7 @@ const MemoryJar = () => {
       <div className="bg-indigo-100 p-6 rounded-2xl mb-6 flex justify-between items-center">
         <div>
           <h2 className="text-indigo-900 font-bold text-xl">Memory Grid</h2>
-          <p className="text-indigo-600 text-sm">Showing 4 at a time.</p>
+          <p className="text-indigo-600 text-sm">{memories.length > 0 ? "Showing 4 at a time." : "No memories yet."}</p>
         </div>
         <button onClick={() => setShowInput(!showInput)} className="bg-white p-2 rounded-full text-indigo-600 shadow-sm"><Plus size={20}/></button>
       </div>
@@ -473,6 +816,7 @@ const MemoryJar = () => {
         </div>
       )}
 
+      {/* 2x2 Grid */}
       <div className="flex-1 grid grid-cols-2 grid-rows-2 gap-3 pb-8">
         {Array.from({ length: 4 }).map((_, i) => {
           const item = currentItems[i];
@@ -489,7 +833,7 @@ const MemoryJar = () => {
                 </>
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-slate-300">
-                  <Heart size={24} />
+                  <Heart size={24} className="opacity-20" />
                 </div>
               )}
             </div>
@@ -497,6 +841,7 @@ const MemoryJar = () => {
         })}
       </div>
       
+      {/* Pagination dots */}
       <div className="flex justify-center gap-1 mb-4">
         {Array.from({ length: Math.ceil(memories.length / 4) }).map((_, i) => (
           <div key={i} className={`w-2 h-2 rounded-full transition-colors ${i === page ? 'bg-indigo-500' : 'bg-slate-200'}`} />
@@ -688,7 +1033,6 @@ const LoveTicTacToe = () => {
   const [isXNext, setIsXNext] = useState(true);
   const [winner, setWinner] = useState(null);
 
-  // Sync with Firebase
   useEffect(() => {
     if (isFirebaseEnabled && db) {
       const gameRef = doc(db, "games", "tictactoe");
@@ -698,7 +1042,6 @@ const LoveTicTacToe = () => {
           setBoard(data.board);
           setIsXNext(data.isXNext);
           
-          // Confetti for new wins
           if (data.winner && !winner) {
             setWinner(data.winner);
             confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
@@ -706,13 +1049,12 @@ const LoveTicTacToe = () => {
              setWinner(data.winner);
           }
         } else {
-            // Initialize if it doesn't exist
             setDoc(gameRef, { board: Array(9).fill(null), isXNext: true, winner: null });
         }
       });
       return () => unsubscribe();
     }
-  }, [winner]); // Re-run effect if winner changes locally to prevent loops
+  }, [winner]);
 
   const calculateWinner = (squares) => {
     const lines = [
@@ -732,7 +1074,6 @@ const LoveTicTacToe = () => {
   const handleClick = async (i) => {
     if (winner || board[i]) return;
     
-    // Optimistic Update
     const newBoard = [...board];
     newBoard[i] = isXNext ? '❤️' : '💋';
     setBoard(newBoard);
@@ -752,12 +1093,10 @@ const LoveTicTacToe = () => {
   };
 
   const resetGame = async () => {
-    // Reset Local
     setBoard(Array(9).fill(null));
     setIsXNext(true);
     setWinner(null);
     
-    // Reset Cloud
     if (isFirebaseEnabled && db) {
        await setDoc(doc(db, "games", "tictactoe"), {
           board: Array(9).fill(null),
@@ -797,7 +1136,6 @@ const LoveTicTacToe = () => {
 // --- MAIN APP ---
 export default function App() {
   const [view, setView] = useState('home');
-  // LIFTED STATE: User selection is now global so it works for Distance Tracker too
   const [currentUser, setCurrentUser] = useState("Krish"); 
 
   return (
@@ -813,7 +1151,7 @@ export default function App() {
             <ArrowLeft size={24} className="text-slate-600" />
           </button>
           <span className="ml-2 font-bold text-lg capitalize">
-            {view === 'food' ? 'Dinner' : view === 'game' ? 'Game Room' : view}
+            {view === 'food' ? 'Dinner' : view === 'game' ? 'Game Room' : view === 'qa' ? 'Q&A' : view === 'thisorthat' ? 'This or That' : view === 'drawing' ? 'Our Note' : view}
           </span>
         </div>
       )}
@@ -831,6 +1169,9 @@ export default function App() {
         {view === 'memories' && <MemoryJar />}
         {view === 'food' && <FoodSwiper />}
         {view === 'game' && <LoveTicTacToe />}
+        {view === 'thisorthat' && <ThisOrThat currentUser={currentUser} />}
+        {view === 'drawing' && <DrawingNote currentUser={currentUser} />}
+        {view === 'qa' && <QABoard currentUser={currentUser} />}
       </div>
 
     </div>
